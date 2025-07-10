@@ -9,6 +9,14 @@ npm install capacitor-native-ssl-pinning
 npx cap sync
 ```
 
+## Ways to Extract Public key
+ - ### For public key pinning the public key should be extracted by the following options
+    - #### From URL (replace google with your domain)
+        - ```openssl s_client -servername google.com -connect google.com:443 | openssl x509 -pubkey -noout | openssl rsa -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64```
+    - #### From .cer file
+        - ```openssl x509 -in eftapme_com.cer -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64``` 
+  
+
 ## API
 
 <docgen-index>
