@@ -1,6 +1,6 @@
 {
   "name": "capacitor-native-ssl-pinning",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Capacitor native ssl pinning & public key pinning using OkHttp 3 in Android, and AFNetworking on iOS.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
