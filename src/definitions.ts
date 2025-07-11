@@ -42,4 +42,5 @@ export interface NativeHttpPlugin extends Plugin {
   fetch(options: { url: string; options: NativeSSLPinning.Options }): Promise<NativeSSLPinning.Response>;
   getCookies(options: { domain: string }): Promise<NativeSSLPinning.Cookies>;
   removeCookieByName(options: { cookieName: string }): Promise<void>;
+  toggleLogging(options: { enableLogging: boolean }): Promise<void>;
 }

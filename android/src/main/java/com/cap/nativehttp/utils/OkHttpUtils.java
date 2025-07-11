@@ -4,7 +4,6 @@ import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 
-import com.cap.nativehttp.BuildConfig;
 import com.getcapacitor.JSObject;
 
 import org.json.JSONArray;
@@ -15,8 +14,12 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.KeyManagementException;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -52,8 +55,9 @@ public class OkHttpUtils {
     private static SSLContext sslContext;
     private static String content_type = "application/json; charset=utf-8";
     public static MediaType mediaType = MediaType.parse(content_type);
+    public static Boolean enableDebugLogging = false;
 
-    public static OkHttpClient buildOkHttpClient(CookieJar cookieJar, String domainName, List<String> certs, JSONObject options) throws JSONException {
+    public static OkHttpClient buildOkHttpClient(CookieJar cookieJar, String domainName, List<String> certs, JSONObject options) throws JSONException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException, KeyManagementException {
 
         OkHttpClient client = null;
         if (!clientsByDomain.containsKey(domainName)) {
@@ -68,7 +72,8 @@ public class OkHttpUtils {
                 clientBuilder
                         .sslSocketFactory(sslContext.getSocketFactory(), manager);
             }
-            applyDebugLogging(clientBuilder);
+            if (enableDebugLogging)
+                applyDebugLogging(clientBuilder);
 
             client = clientBuilder
                     .build();
@@ -101,17 +106,16 @@ public class OkHttpUtils {
 
         clientBuilder = applyCommonClientConfig(clientBuilder, cookieJar, options);
 
-        applyDebugLogging(clientBuilder);
+        if (enableDebugLogging)
+            applyDebugLogging(clientBuilder);
 
         return applyTimeoutsIfPresent(clientBuilder.build(), options);
     }
 
     public static void applyDebugLogging(OkHttpClient.Builder builder) {
-        if (BuildConfig.DEBUG) {
-            HttpLoggingInterceptor logging = new HttpLoggingInterceptor();
-            logging.setLevel(HttpLoggingInterceptor.Level.BODY);
-            builder.addInterceptor(logging);
-        }
+        HttpLoggingInterceptor logging = new HttpLoggingInterceptor();
+        logging.setLevel(HttpLoggingInterceptor.Level.BODY);
+        builder.addInterceptor(logging);
     }
 
     private static OkHttpClient applyTimeoutsIfPresent(OkHttpClient client, JSONObject options) throws JSONException {
@@ -144,41 +148,37 @@ public class OkHttpUtils {
         return certificatePinnerBuilder.build();
     }
 
-    private static X509TrustManager initSSLPinning(List<String> certs) {
+    private static X509TrustManager initSSLPinning(List<String> certs) throws NoSuchAlgorithmException, CertificateException, KeyStoreException, IOException, KeyManagementException {
         X509TrustManager trustManager = null;
-        try {
-            sslContext = SSLContext.getInstance("TLS");
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            String keyStoreType = KeyStore.getDefaultType();
-            KeyStore keyStore = KeyStore.getInstance(keyStoreType);
-            keyStore.load(null, null);
+        sslContext = SSLContext.getInstance("TLS");
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        String keyStoreType = KeyStore.getDefaultType();
+        KeyStore keyStore = KeyStore.getInstance(keyStoreType);
+        keyStore.load(null, null);
 
-            for (int i = 0; i < certs.size(); i++) {
-                String filename = certs.get(i);
-                InputStream caInput = new BufferedInputStream(Objects.requireNonNull(OkHttpUtils.class.getClassLoader()).getResourceAsStream("assets/" + filename + ".cer"));
-                Certificate ca;
-                try {
-                    ca = cf.generateCertificate(caInput);
-                } finally {
-                    caInput.close();
-                }
-                keyStore.setCertificateEntry(filename, ca);
+        for (int i = 0; i < certs.size(); i++) {
+            String filename = certs.get(i);
+            InputStream caInput = new BufferedInputStream(Objects.requireNonNull(OkHttpUtils.class.getClassLoader()).getResourceAsStream("assets/" + filename + ".cer"));
+            Certificate ca;
+            try {
+                ca = cf.generateCertificate(caInput);
+            } finally {
+                caInput.close();
             }
-
-            String tmfAlgorithm = TrustManagerFactory.getDefaultAlgorithm();
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(tmfAlgorithm);
-            tmf.init(keyStore);
-
-            TrustManager[] trustManagers = tmf.getTrustManagers();
-            if (trustManagers.length != 1 || !(trustManagers[0] instanceof X509TrustManager)) {
-                throw new IllegalStateException("Unexpected default trust managers:" + Arrays.toString(trustManagers));
-            }
-            trustManager = (X509TrustManager) trustManagers[0];
-
-            sslContext.init(null, new TrustManager[]{trustManager}, null);
-        } catch (Exception e) {
-            e.printStackTrace();
+            keyStore.setCertificateEntry(filename, ca);
         }
+
+        String tmfAlgorithm = TrustManagerFactory.getDefaultAlgorithm();
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(tmfAlgorithm);
+        tmf.init(keyStore);
+
+        TrustManager[] trustManagers = tmf.getTrustManagers();
+        if (trustManagers.length != 1 || !(trustManagers[0] instanceof X509TrustManager)) {
+            throw new IllegalStateException("Unexpected default trust managers:" + Arrays.toString(trustManagers));
+        }
+        trustManager = (X509TrustManager) trustManagers[0];
+
+        sslContext.init(null, new TrustManager[]{trustManager}, null);
         return trustManager;
     }
 
@@ -190,7 +190,7 @@ public class OkHttpUtils {
         return value.has("type") && (value.has("uri") || value.has("path") || value.has("data"));
     }
 
-    private static void addFormDataPart(Context context, MultipartBody.Builder multipartBodyBuilder, JSONObject fileData, String key) throws JSONException {
+    private static void addFormDataPart(Context context, MultipartBody.Builder multipartBodyBuilder, JSONObject fileData, String key) throws JSONException, IOException {
         String type = fileData.optString("type", "application/octet-stream");
         String fileName = fileData.optString("fileName", fileData.optString("name", "upload.bin"));
 
@@ -208,14 +208,14 @@ public class OkHttpUtils {
                 RequestBody fileBody = RequestBody.create(file, MediaType.parse(type));
                 multipartBodyBuilder.addFormDataPart(key, fileName, fileBody);
             } catch (IOException e) {
-                e.printStackTrace();
+                throw new IOException(e);
             }
         } else {
             Log.w("NativeHttp", "No valid file data found for key: " + key);
         }
     }
 
-    private static RequestBody buildFormDataRequestBody(Context context, JSObject formData) throws JSONException {
+    private static RequestBody buildFormDataRequestBody(Context context, JSObject formData) throws JSONException, IOException {
         MultipartBody.Builder multipartBodyBuilder = new MultipartBody.Builder().setType(MultipartBody.FORM);
         multipartBodyBuilder.setType((Objects.requireNonNull(MediaType.parse("multipart/form-data"))));
         if (formData.has("_parts")) {
@@ -240,7 +240,7 @@ public class OkHttpUtils {
         return multipartBodyBuilder.build();
     }
 
-    public static Request buildRequest(Context context, JSObject options, String hostname) throws JSONException {
+    public static Request buildRequest(Context context, JSObject options, String hostname) throws JSONException, IOException {
 
         Request.Builder requestBuilder = new Request.Builder();
         RequestBody body = null;

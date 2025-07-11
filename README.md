@@ -24,6 +24,7 @@ npx cap sync
 * [`fetch(...)`](#fetch)
 * [`getCookies(...)`](#getcookies)
 * [`removeCookieByName(...)`](#removecookiebyname)
+* [`toggleLogging(...)`](#togglelogging)
 
 </docgen-index>
 
@@ -69,6 +70,19 @@ removeCookieByName(options: { cookieName: string; }) => Promise<void>
 | Param         | Type                                 |
 | ------------- | ------------------------------------ |
 | **`options`** | <code>{ cookieName: string; }</code> |
+
+--------------------
+
+
+### toggleLogging(...)
+
+```typescript
+toggleLogging(options: { enableLogging: boolean; }) => Promise<void>
+```
+
+| Param         | Type                                     |
+| ------------- | ---------------------------------------- |
+| **`options`** | <code>{ enableLogging: boolean; }</code> |
 
 --------------------
 

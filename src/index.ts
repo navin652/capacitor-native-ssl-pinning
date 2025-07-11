@@ -127,6 +127,9 @@ const NativeHttp = {
   async removeCookieByName(options: { cookieName: string }) {
     return NativeHttpPluginRef.removeCookieByName(options);
   },
+  async toggleLogging(options: { enableLogging: boolean }) {
+    return NativeHttpPluginRef.toggleLogging(options);
+  }
 };
 
 export * from './definitions';

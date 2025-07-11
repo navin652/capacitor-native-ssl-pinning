@@ -144,4 +144,18 @@ export class NativeHttpWeb extends WebPlugin implements NativeHttpPlugin {
       };
       reader.readAsDataURL(blob);
     });
+
+  /**
+   * Toggles logging for the plugin.
+   * This method is not implemented in the web version as logging is typically handled
+   * through the console in web applications.
+   * @param _options - The options containing the enableLogging flag.
+   * @returns A promise that resolves when the logging state is toggled.
+   * @throws An error indicating that this method is not implemented in the web version.
+   * Note: This method is included for compatibility with the NativeHttpPlugin interface,
+   * but it does not perform any actual logging operations in the web implementation.
+   */
+  toggleLogging(_options: { enableLogging: boolean }): Promise<void> {
+    throw new Error('Method not implemented.As this is a web implementation, logging cannot be toggled.');
+  }
 }

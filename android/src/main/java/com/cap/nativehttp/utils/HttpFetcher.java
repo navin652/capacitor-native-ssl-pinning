@@ -19,6 +19,10 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyManagementException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -44,7 +48,7 @@ public class HttpFetcher {
         this.cookieManager = cookieManager;
     }
 
-    public void fetch(PluginCall call) throws JSONException {
+    public void fetch(PluginCall call) throws JSONException, IOException, CertificateException, NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
         String url = call.getString("url");
         JSObject options = call.getObject("options");
         JSObject response = new JSObject();
@@ -75,11 +79,11 @@ public class HttpFetcher {
             @Override
             public void onFailure(@NonNull Call call_, @NonNull IOException e) {
                 TempFileManager.cleanup();
-                call.reject(e.getMessage(), e);
+                call.reject("Error in network request", e.getMessage());
             }
 
             @Override
-            public void onResponse(@NonNull Call call_, @NonNull Response okHttpResponse) throws IOException {
+            public void onResponse(@NonNull Call call_, @NonNull Response okHttpResponse) {
                 try {
                     handleResponse(call, options, okHttpResponse, response);
                 } finally {
@@ -89,7 +93,7 @@ public class HttpFetcher {
         });
     }
 
-    private void handleResponse(PluginCall call, JSObject options, Response okHttpResponse, JSObject response) throws IOException {
+    private void handleResponse(PluginCall call, JSObject options, Response okHttpResponse, JSObject response) {
         ResponseBody body = okHttpResponse.body();
 
         try (body) {
@@ -135,10 +139,10 @@ public class HttpFetcher {
             if (okHttpResponse.isSuccessful()) {
                 call.resolve(response);
             } else {
-                call.reject("Request failed", response);
+                call.reject("API Response", String.valueOf(response));
             }
         } catch (Exception e) {
-            call.reject(e.getMessage());
+            call.reject("Unexpected error occurred : ", e.getMessage());
         }
     }
 }

@@ -5,7 +5,6 @@ import android.os.Environment;
 
 import androidx.annotation.NonNull;
 
-import com.cap.nativehttp.BuildConfig;
 import com.getcapacitor.JSObject;
 
 import org.json.JSONException;
@@ -33,21 +32,16 @@ import okhttp3.Response;
 public class Utilities {
 
     // Copy an InputStream to a File.
-    public static void copyInputStreamToFile(InputStream in, File file) {
+    public static void copyInputStreamToFile(InputStream in, File file) throws IOException {
         try (InputStream input = in;
              OutputStream output = new FileOutputStream(file)) {
-
             byte[] buf = new byte[8192];
             int len;
             while ((len = input.read(buf)) != -1) {
                 output.write(buf, 0, len);
             }
-
-        } catch (IOException e) {
-            if (BuildConfig.DEBUG) e.printStackTrace();
         }
     }
-
 
     /**
      * @param map     - map of headers
