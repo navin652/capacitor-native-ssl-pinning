@@ -185,18 +185,71 @@ private final class NativeHttpSessionDelegate: NSObject, URLSessionDelegate, URL
     /// Checks every certificate in the presented chain against the pinned SHA-256 SPKI hashes, same
     /// as OkHttp's CertificatePinner (the previous scaffold only checked the leaf certificate at
     /// index 0, which is not equivalent).
+    ///
+    /// `SecKeyCopyExternalRepresentation` returns the *raw* key (PKCS#1 `RSAPublicKey` for RSA,
+    /// raw point bytes for EC) -- it does NOT include the X.509 `SubjectPublicKeyInfo` (SPKI)
+    /// `AlgorithmIdentifier` header. Every other pin in this ecosystem (OkHttp's CertificatePinner
+    /// on Android, openssl, standard "sha256/..." pin generators) hashes the full SPKI DER, so
+    /// hashing the raw representation directly produces a different value and pinning always fails
+    /// against real-world pins. We reconstruct the SPKI DER by prepending the fixed
+    /// algorithm-identifier header for the key's type/size (same technique TrustKit/OWASP use)
+    /// before hashing.
     private static func publicKeyMatches(serverTrust: SecTrust, pinnedHashes: [String]) -> Bool {
         for certificate in certificates(in: serverTrust) {
             guard let publicKey = SecCertificateCopyKey(certificate),
-                  let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
+                  let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data?,
+                  let attributes = SecKeyCopyAttributes(publicKey) as? [CFString: Any],
+                  let header = spkiHeader(for: attributes) else {
                 continue
             }
-            let hash = Data(SHA256.hash(data: publicKeyData)).base64EncodedString()
+            let spkiData = Data(header) + publicKeyData
+            let hash = Data(SHA256.hash(data: spkiData)).base64EncodedString()
             if pinnedHashes.contains(hash) {
                 return true
             }
         }
         return false
+    }
+
+    /// Fixed X.509 SPKI `AlgorithmIdentifier` + length-prefix headers, keyed by key type/size, as
+    /// published by TrustKit/OWASP. Prepending the right one to the raw key bytes from
+    /// `SecKeyCopyExternalRepresentation` reproduces the same DER that `openssl x509 -pubkey | openssl
+    /// pkey -pubin -outform der` would emit, which is what the "sha256/..." pins are computed from.
+    private static func spkiHeader(for attributes: [CFString: Any]) -> [UInt8]? {
+        guard let keyType = attributes[kSecAttrKeyType] as? String,
+              let keySizeInBits = attributes[kSecAttrKeySizeInBits] as? Int else {
+            return nil
+        }
+
+        let rsaHeaderSpki: [UInt8] = [
+            0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
+            0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0f, 0x00
+        ]
+        let rsa4096HeaderSpki: [UInt8] = [
+            0x30, 0x82, 0x02, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
+            0x01, 0x05, 0x00, 0x03, 0x82, 0x02, 0x0f, 0x00
+        ]
+        let ecDsaSecp256r1HeaderSpki: [UInt8] = [
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+            0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00
+        ]
+        let ecDsaSecp384r1HeaderSpki: [UInt8] = [
+            0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
+            0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00
+        ]
+
+        switch (keyType as CFString, keySizeInBits) {
+        case (kSecAttrKeyTypeRSA, 2048):
+            return rsaHeaderSpki
+        case (kSecAttrKeyTypeRSA, 4096):
+            return rsa4096HeaderSpki
+        case (kSecAttrKeyTypeECSECPrimeRandom, 256):
+            return ecDsaSecp256r1HeaderSpki
+        case (kSecAttrKeyTypeECSECPrimeRandom, 384):
+            return ecDsaSecp384r1HeaderSpki
+        default:
+            return nil
+        }
     }
 
     /// Equivalent to Android's custom X509TrustManager built from a KeyStore containing only the
