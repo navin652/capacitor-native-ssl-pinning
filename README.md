@@ -1,6 +1,16 @@
 # capacitor-native-ssl-pinning
 
-Capacitor native SSL pinning & public key pinning using OkHttp 3 in Android, and AFNetworking on iOS.
+Capacitor native SSL pinning & public key pinning using OkHttp 3 on Android, and native `URLSession` + `CryptoKit` on iOS.
+
+The plugin's API and pinning approach are inspired by [react-native-ssl-pinning](https://github.com/MaxToyberman/react-native-ssl-pinning), adapted for Capacitor.
+
+## Platform Support
+
+| Platform | Status | Notes |
+| -------- | ------ | ----- |
+| Android  | ✅ Fully implemented | OkHttp3-based. Certificate & public-key pinning, cookies, `text`/`base64`/`blob`/`file` response types, multipart/file uploads, request logging. See [android/README.md](android/README.md). |
+| iOS      | ✅ Fully implemented | `URLSession`-based. Certificate & public-key pinning, cookies, `text`/`base64`/`blob`/`file` response types, multipart/file uploads, request logging. See [ios/README.md](ios/README.md). |
+| Web      | ✅ Fallback implemented | Uses the browser `fetch`/cookie APIs. SSL pinning options are ignored, since browsers manage TLS trust themselves. |
 
 ## Install
 
@@ -609,3 +619,15 @@ console.log('Upload result:', response);
 ```
 
 ---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup and build scripts, and [android/README.md](android/README.md) / [ios/README.md](ios/README.md) for platform-specific implementation details.
+
+## Credits
+
+The SSL & public-key pinning approach is adapted from [react-native-ssl-pinning](https://github.com/MaxToyberman/react-native-ssl-pinning) by Max Toyberman -- OkHttp3 on Android, native `URLSession`/`CryptoKit` on iOS.
+
+## License
+
+MIT
