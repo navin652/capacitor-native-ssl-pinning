@@ -34,7 +34,7 @@ enum URLSessionUtils {
         let pkPinning = (options["pkPinning"] as? Bool) ?? false
         let mode: TrustMode = pkPinning
             ? .publicKeyPinning(hashes: certs.map { $0.replacingOccurrences(of: "sha256/", with: "") })
-            : .certificatePinning(certData: loadBundledCertificates(named: certs))
+            : .certificatePinning(certData: try loadBundledCertificates(named: certs))
 
         let session = buildSession(mode: mode, options: options)
         sessionsByDomain[domain] = session
@@ -109,18 +109,27 @@ enum URLSessionUtils {
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
-    /// Certificate-pinning mode loads `.cer` files bundled as iOS app resources (Bundle.main),
-    /// matching the pattern android/.../OkHttpUtils.java uses for its `assets/<name>.cer` lookup:
-    /// the consuming app supplies the certificate as a bundled resource, keyed by filename only.
-    private static func loadBundledCertificates(named names: [String]) -> [Data] {
-        names.compactMap { certPath in
-            let certName = (certPath as NSString).lastPathComponent
-            guard let path = Bundle.main.path(forResource: certName, ofType: "cer"),
-                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
-                return nil
-            }
-            return data
+    /// Certificate-pinning mode loads `.cer` files bundled as iOS app resources (Bundle.main).
+    /// Callers may pass either a bare certificate name (`eftapme_new`) or a Capacitor public path
+    /// (`public/certificates/eftapme_new`).
+    private static func loadBundledCertificates(named names: [String]) throws -> [Data] {
+        let certificates = names.compactMap { certPath -> Data? in
+            let nsPath = certPath as NSString
+            let directory = nsPath.deletingLastPathComponent == "." ? nil : nsPath.deletingLastPathComponent
+            let resourceName = (nsPath.lastPathComponent as NSString).deletingPathExtension
+            let fileExtension = nsPath.pathExtension.isEmpty ? "cer" : nsPath.pathExtension
+
+            let path = Bundle.main.path(forResource: resourceName, ofType: fileExtension, inDirectory: directory)
+                ?? Bundle.main.path(forResource: resourceName, ofType: fileExtension)
+
+            guard let path else { return nil }
+            return try? Data(contentsOf: URL(fileURLWithPath: path))
         }
+
+        guard !certificates.isEmpty else {
+            throw NativeHttpError.message("No bundled SSL certificates found")
+        }
+        return certificates
     }
 
     private static func numberValue(_ value: JSValue?) -> Double? {
