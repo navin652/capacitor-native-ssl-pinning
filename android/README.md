@@ -1,6 +1,6 @@
 # Android Implementation
 
-This is the Android side of [`capacitor-native-ssl-pinning`](../README.md), built on [OkHttp 3](https://square.github.io/okhttp/). It's the **fully implemented, reference platform** for this plugin — iOS is currently in progress and does not yet have feature parity (see the root [README](../README.md#platform-support)).
+This is the Android side of [`capacitor-native-ssl-pinning`](../README.md), built on [OkHttp 3](https://square.github.io/okhttp/). It was the original reference platform for this plugin; iOS ([ios/README.md](../ios/README.md)) now mirrors it feature-for-feature (see the root [README](../README.md#platform-support)).
 
 ## Source layout
 
@@ -31,7 +31,7 @@ android/src/main/java/com/cap/nativehttp/
 
 ### Where to put `.cer` files
 
-Certificate-pinning mode reads certificates via `OkHttpUtils.class.getClassLoader().getResourceAsStream("assets/" + filename + ".cer")`. In a Capacitor app this means the file must be bundled as a raw Android asset (e.g. placed in the consuming app's `android/app/src/main/assets/` folder), and only the filename (no path, no extension) should be passed in `sslPinning.certs`.
+Certificate-pinning mode reads certificates via `OkHttpUtils.class.getClassLoader().getResourceAsStream("assets/" + filename + ".cer")`, where `filename` is the **exact** string passed in `sslPinning.certs` -- it is not trimmed to a bare name. In a Capacitor app this means the `.cer` file must be bundled as a raw Android asset under `android/app/src/main/assets/`, at a path matching whatever string you pass: `certs: ['public/certificates/httpbin']` expects a file at `android/app/src/main/assets/public/certificates/httpbin.cer`. (This is also why the root README's upload/pinning examples use `public/certificates/...`-style paths, mirroring the iOS side -- see [ios/README.md](../ios/README.md#where-to-put-cer-files).)
 
 ## Other behavior worth knowing
 

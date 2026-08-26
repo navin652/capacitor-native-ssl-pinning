@@ -1,15 +1,12 @@
 import XCTest
 @testable import NativeHttpPlugin
 
-class NativeHttpTests: XCTestCase {
-    func testEcho() {
-        // This is an example of a functional test case for a plugin.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+class NativeHttpPluginTests: XCTestCase {
+    func testDomainNameStripsWWWPrefix() {
+        XCTAssertEqual(Utilities.domainName(from: "https://www.example.com/path"), "example.com")
+    }
 
-        let implementation = NativeHttp()
-        let value = "Hello, World!"
-        let result = implementation.echo(value)
-
-        XCTAssertEqual(value, result)
+    func testDomainNameKeepsNonWWWHost() {
+        XCTAssertEqual(Utilities.domainName(from: "https://api.example.com/path"), "api.example.com")
     }
 }

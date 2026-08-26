@@ -23,7 +23,7 @@ ios/Sources/NativeHttpPlugin/
 
 1. `disableAllSecurity: true` → a trust-all session (`SSLSecurityUtils.trustAllCredential`) that accepts any server certificate. No pinning at all; use only for local/dev endpoints.
 2. otherwise, `sslPinning.certs` is required, and the mode branches on `pkPinning`:
-   - `pkPinning: true` -- public-key pinning: every certificate in the presented chain is checked (via `CryptoKit`'s `SHA256`) against the `sha256/...` hashes in `certs`, matching OkHttp's `CertificatePinner` semantics (any cert in the chain may match, not just the leaf).
+   - `pkPinning: true` -- public-key pinning: every certificate in the presented chain is checked against the `sha256/...` hashes in `certs`, matching OkHttp's `CertificatePinner` semantics (any cert in the chain may match, not just the leaf). The hash is computed over the certificate's full X.509 `SubjectPublicKeyInfo` (SPKI) DER -- the same thing `openssl x509 -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256` produces (see the root README's "Ways to Extract Public key" section) and what OkHttp's `CertificatePinner` hashes on Android. `SecKeyCopyExternalRepresentation` only returns the *raw* key (PKCS#1 for RSA, raw point bytes for EC), without that SPKI header, so `URLSessionUtils` reconstructs the SPKI DER by prepending the fixed algorithm-identifier header for the key's type/size (RSA 2048/4096, EC P-256/P-384 -- the same technique TrustKit/OWASP use) before hashing. **A pinned certificate using an unsupported key type/size will fail closed** (that certificate is skipped when checking the chain, same as a non-matching hash).
    - `pkPinning: false` (default) -- certificate pinning: the `.cer` files named in `certs` are set as the *only* trust anchors (`SecTrustSetAnchorCertificates` + `SecTrustSetAnchorCertificatesOnly`), so only chains that build up to one of those exact certificates validate.
 3. Neither present → the call is rejected with `"SSL Pinning key not provided"`.
 
@@ -31,7 +31,7 @@ An empty `certs` array trusts nothing under either pinning mode (matching Androi
 
 ### Where to put `.cer` files
 
-Certificate-pinning mode loads certificates via `Bundle.main.path(forResource: certName, ofType: "cer")`. In a Capacitor app this means the file must be added as a bundled resource in the iOS app's Xcode project (added to the app target, not just the file system), and only the filename (no path, no extension) should be passed in `sslPinning.certs`.
+Certificate-pinning mode resolves each string in `sslPinning.certs` as a bundle resource path (`Bundle.main.path(forResource:ofType:inDirectory:)`), falling back to a flat top-level lookup if that fails. You can pass either a bare certificate name (`eftapme_new`, extension defaults to `cer`) or a nested, Capacitor-style path (`public/certificates/eftapme_new`) -- matching the paths used in the root README's examples and mirroring how Android resolves the same string under `assets/` (see [android/README.md](../android/README.md#where-to-put-cer-files)). Either way, the `.cer` file must be added as a bundled resource in the iOS app's Xcode project (added to the app target, not just present on the file system). If none of the given certs resolve to a bundled file, the call is rejected with `"No bundled SSL certificates found"` rather than silently pinning against an empty (trust-nothing) list.
 
 ## Other behavior worth knowing
 

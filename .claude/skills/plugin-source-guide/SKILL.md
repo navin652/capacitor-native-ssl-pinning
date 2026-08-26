@@ -24,11 +24,30 @@ Both native platforms are fully implemented and mirror each other feature-for-fe
   `document.cookie` APIs. SSL pinning options are accepted but meaningless there (browsers own TLS
   trust) — this is expected, not a gap to fix.
 
-`ios/Sources/NativeHttpPlugin/NativeHttp.swift` and its XCTest in `ios/Tests/` are leftover
-plugin-template scaffold (an `echo` example) that nothing else references — harmless, and left
-alone deliberately, the same way Android's own template scaffold tests
+The iOS side was verified on macOS after the initial port, which surfaced (and fixed) two real bugs
+worth knowing if you touch pinning code again:
+
+- **Public-key pinning hash.** `SecKeyCopyExternalRepresentation` returns the *raw* key (PKCS#1 for
+  RSA, raw point bytes for EC), not the X.509 SPKI DER that `sha256/...` pins are actually computed
+  from (openssl, OkHttp's `CertificatePinner`, TrustKit, etc. all hash the full SPKI). Hashing the
+  raw bytes directly meant pinning silently never matched real-world pins. Fixed by reconstructing
+  the SPKI DER (prepending the fixed algorithm-identifier header for the key's type/size) before
+  hashing — see `URLSessionUtils.swift`'s `spkiHeader(for:)`. Only RSA 2048/4096 and EC P-256/P-384
+  have a header defined; other key types/sizes fail closed (skipped when matching the chain).
+- **Certificate-pinning cert paths.** `loadBundledCertificates` now resolves nested, Capacitor-style
+  paths (`public/certificates/eftapme_new`), not just a bare filename, matching how Android resolves
+  the same `sslPinning.certs` string under `assets/` — see
+  [ios/README.md](../../../ios/README.md#where-to-put-cer-files) /
+  [android/README.md](../../../android/README.md#where-to-put-cer-files). It now also throws a clear
+  error if no cert resolves, instead of silently pinning against an empty (trust-nothing) list.
+
+`ios/Sources/NativeHttpPlugin/NativeHttp.swift`, the leftover plugin-template `echo` scaffold class,
+has been deleted — the plugin entry point talks to the `Utils/` helpers directly, there's no separate
+"implementation" class the way the template originally set up. `ios/Tests/` was updated to match
+(no longer references the deleted class). Android's own template scaffold tests
 (`android/src/test/.../ExampleUnitTest.java`, `android/src/androidTest/.../ExampleInstrumentedTest.java`)
-were never replaced with real tests either. Don't treat either as documentation of real behavior.
+are still untouched boilerplate, unrelated to this plugin's behavior — don't treat those as
+documentation of real behavior.
 
 ## Repo map
 
