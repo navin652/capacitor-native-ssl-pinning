@@ -158,4 +158,15 @@ export class NativeHttpWeb extends WebPlugin implements NativeHttpPlugin {
   toggleLogging(_options: { enableLogging: boolean }): Promise<void> {
     throw new Error('Method not implemented.As this is a web implementation, logging cannot be toggled.');
   }
+
+  /**
+   * Clears the native SSL pinning cache.
+   * This method is not implemented in the web version as browsers manage TLS trust themselves and
+   * there is no native per-domain pinning cache to clear. It is included for compatibility with the
+   * NativeHttpPlugin interface.
+   * @returns A promise that resolves immediately.
+   */
+  clearCertificateCache(): Promise<void> {
+    return Promise.resolve();
+  }
 }

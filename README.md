@@ -35,6 +35,7 @@ npx cap sync
 * [`getCookies(...)`](#getcookies)
 * [`removeCookieByName(...)`](#removecookiebyname)
 * [`toggleLogging(...)`](#togglelogging)
+* [`clearCertificateCache()`](#clearcertificatecache)
 
 </docgen-index>
 
@@ -93,6 +94,21 @@ toggleLogging(options: { enableLogging: boolean; }) => Promise<void>
 | Param         | Type                                     |
 | ------------- | ---------------------------------------- |
 | **`options`** | <code>{ enableLogging: boolean; }</code> |
+
+--------------------
+
+
+### clearCertificateCache()
+
+```typescript
+clearCertificateCache() => Promise<void>
+```
+
+Clears the cached, per-domain native pinning configuration (OkHttpClient on Android,
+URLSession on iOS). Both platforms build and cache a client/session per domain the first time a
+pinned request is made and reuse it afterwards, so certificates replaced on disk (rotation) would
+otherwise only take effect after an app restart. Call this after writing new certificate files
+to storage so subsequent fetch() calls rebuild pinning with the fresh certificates.
 
 --------------------
 
@@ -218,6 +234,52 @@ NativeHttp.fetch({
     console.log(resp);
   })
   .catch(console.error);
+```
+
+---
+
+### Use SSL Pinning with Certificates Stored at Runtime (Rotation)
+
+By default certificates are loaded from bundled assets (`sslPinning.source` defaults to `'asset'`). If your certificates rotate, you can **download them at runtime, save them to device storage** (e.g. with [`@capacitor/filesystem`](https://capacitorjs.com/docs/apis/filesystem)), then pin against those files instead of re-shipping the app. Use `sslPinning.source: 'filesystem'` and pass the absolute path or `file://`/`content://` URI of each `.cer`/`.pem` file in `certs`.
+
+> **Tip:** obtain the absolute file URI with `Filesystem.getUri({ path, directory })` after writing the file.
+
+```typescript
+import { Filesystem, Directory } from '@capacitor/filesystem';
+
+// 1. Download the cert from your API and persist it (e.g. inside DATA directory).
+await Filesystem.writeFile({
+  path: 'ssl/certs/your-api.cer',
+  // data: <cert bytes downloaded from an endpoint>,
+  directory: Directory.Data,
+});
+
+// 2. Resolve the native URI for the stored certificate.
+const { uri } = await Filesystem.getUri({
+  path: 'ssl/certs/your-api.cer',
+  directory: Directory.Data,
+});
+
+// 3. Pin using the runtime certificate stored on disk.
+const res = await NativeHttp.fetch({
+  url: 'https://your-api/request',
+  options: {
+    method: 'GET',
+    pkPinning: false,
+    sslPinning: {
+      certs: [uri],
+      source: 'filesystem',
+    },
+  },
+});
+```
+
+**Applying rotated certificates without an app restart**
+
+Both platforms build and cache one pinned client/session per domain and reuse it for the process lifetime. After replacing certificate files on disk, call `NativeHttp.clearCertificateCache()` so the next `fetch()` to those domains re-reads the new certificates:
+
+```typescript
+await NativeHttp.clearCertificateCache();
 ```
 
 ---
