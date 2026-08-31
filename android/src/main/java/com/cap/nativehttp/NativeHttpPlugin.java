@@ -69,5 +69,11 @@ public class NativeHttpPlugin extends Plugin {
     public void toggleLogging(PluginCall call) {
         OkHttpUtils.enableDebugLogging = call.getBoolean("enableLogging",false);
     }
+
+    @PluginMethod
+    public void clearCertificateCache(PluginCall call) {
+        OkHttpUtils.clearClientCache();
+        call.resolve();
+    }
 }
 

@@ -57,7 +57,10 @@ public class OkHttpUtils {
     public static MediaType mediaType = MediaType.parse(content_type);
     public static Boolean enableDebugLogging = false;
 
-    public static OkHttpClient buildOkHttpClient(CookieJar cookieJar, String domainName, List<String> certs, JSONObject options) throws JSONException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException, KeyManagementException {
+    private static final String SSL_SOURCE_KEY = "source";
+    private static final String SSL_SOURCE_FILESYSTEM = "filesystem";
+
+    public static OkHttpClient buildOkHttpClient(Context context, CookieJar cookieJar, String domainName, List<String> certs, JSONObject options) throws JSONException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException, KeyManagementException {
 
         OkHttpClient client = null;
         if (!clientsByDomain.containsKey(domainName)) {
@@ -68,7 +71,7 @@ public class OkHttpUtils {
                 clientBuilder.certificatePinner(initPublicKeyPinning(certs, domainName));
             } else {
                 // ssl pinning
-                X509TrustManager manager = initSSLPinning(certs);
+                X509TrustManager manager = initSSLPinning(context, certs, options);
                 clientBuilder
                         .sslSocketFactory(sslContext.getSocketFactory(), manager);
             }
@@ -148,7 +151,29 @@ public class OkHttpUtils {
         return certificatePinnerBuilder.build();
     }
 
-    private static X509TrustManager initSSLPinning(List<String> certs) throws NoSuchAlgorithmException, CertificateException, KeyStoreException, IOException, KeyManagementException {
+    /**
+     * Clears the per-domain OkHttpClient pinning cache. Both platforms cache one pinned
+     * client/session per domain and reuse it for the plugin lifetime, so certificates replaced on
+     * device storage (rotation via `sslPinning.source: "filesystem"`) would otherwise not take
+     * effect until the app restarts. Call this after writing new certificate files so the next
+     * fetch() for a given domain rebuilds pinning with the fresh certificates.
+     */
+    public static void clearClientCache() {
+        clientsByDomain.clear();
+        sslContext = null;
+    }
+
+    private static X509TrustManager initSSLPinning(Context context, List<String> certs, JSONObject options) throws NoSuchAlgorithmException, CertificateException, KeyStoreException, IOException, KeyManagementException, JSONException {
+        // Determine whether the cert references are bundle asset names (default) or filesystem
+        // paths/URIs to certificate files stored on device storage (runtime rotation).
+        String source = "asset";
+        if (options.has("sslPinning")) {
+            JSONObject sslPinning = options.getJSONObject("sslPinning");
+            if (sslPinning.has(SSL_SOURCE_KEY) && SSL_SOURCE_FILESYSTEM.equalsIgnoreCase(sslPinning.getString(SSL_SOURCE_KEY))) {
+                source = SSL_SOURCE_FILESYSTEM;
+            }
+        }
+
         X509TrustManager trustManager = null;
         sslContext = SSLContext.getInstance("TLS");
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
@@ -158,7 +183,12 @@ public class OkHttpUtils {
 
         for (int i = 0; i < certs.size(); i++) {
             String filename = certs.get(i);
-            InputStream caInput = new BufferedInputStream(Objects.requireNonNull(OkHttpUtils.class.getClassLoader()).getResourceAsStream("assets/" + filename + ".cer"));
+            InputStream caInput;
+            if ("filesystem".equals(source)) {
+                caInput = openCertificateStream(context, filename);
+            } else {
+                caInput = new BufferedInputStream(Objects.requireNonNull(OkHttpUtils.class.getClassLoader()).getResourceAsStream("assets/" + filename + ".cer"));
+            }
             Certificate ca;
             try {
                 ca = cf.generateCertificate(caInput);
@@ -180,6 +210,25 @@ public class OkHttpUtils {
 
         sslContext.init(null, new TrustManager[]{trustManager}, null);
         return trustManager;
+    }
+
+    /**
+     * Opens an InputStream for a filesystem-backed certificate reference. Accepts an absolute
+     * filesystem path, a `file://` URI, or a `content://` URI (e.g. as produced by
+     * `@capacitor/filesystem` `Filesystem.getUri()`). Content and file schemes are handled through
+     * the Android ContentResolver so the file does not need to be world-readable.
+     */
+    private static InputStream openCertificateStream(Context context, String certRef) throws IOException {
+        Uri uri = Uri.parse(certRef);
+        if (uri.getScheme() == null) {
+            // Bare absolute path, e.g. /data/user/0/<pkg>/files/ssl/mycert.cer
+            uri = Uri.fromFile(new File(certRef));
+        }
+        InputStream input = context.getContentResolver().openInputStream(uri);
+        if (input == null) {
+            throw new IOException("Could not open certificate file: " + certRef);
+        }
+        return new BufferedInputStream(input);
     }
 
     private static boolean isFilePart(JSONArray part) throws JSONException {

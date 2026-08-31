@@ -68,7 +68,7 @@ public class HttpFetcher {
             for (int i = 0; i < certsJson.length(); i++) {
                 certs.add(certsJson.getString(i));
             }
-            client = OkHttpUtils.buildOkHttpClient(cookieManager, domainName, certs, options);
+            client = OkHttpUtils.buildOkHttpClient(context, cookieManager, domainName, certs, options);
         } else {
             call.reject("SSL Pinning key not provided");
             return;

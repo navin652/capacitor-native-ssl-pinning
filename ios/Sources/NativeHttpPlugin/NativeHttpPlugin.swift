@@ -13,7 +13,8 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "fetch", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getCookies", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "removeCookieByName", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "toggleLogging", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "toggleLogging", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearCertificateCache", returnType: CAPPluginReturnPromise)
     ]
 
     private let httpFetcher = HttpFetcher()
@@ -33,6 +34,11 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func toggleLogging(_ call: CAPPluginCall) {
         URLSessionUtils.enableDebugLogging = call.getBool("enableLogging") ?? false
+        call.resolve()
+    }
+
+    @objc func clearCertificateCache(_ call: CAPPluginCall) {
+        URLSessionUtils.clearSessionCache()
         call.resolve()
     }
 }

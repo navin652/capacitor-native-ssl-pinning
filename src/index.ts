@@ -129,6 +129,15 @@ const NativeHttp = {
   },
   async toggleLogging(options: { enableLogging: boolean }) {
     return NativeHttpPluginRef.toggleLogging(options);
+  },
+  /**
+   * Clears the per-domain native pinning cache so rotated / updated SSL certificates on disk take
+   * effect without an app restart. Call this after replacing certificate files on device storage
+   * (see `sslPinning.source: 'filesystem'`).
+   * @returns A promise that resolves once the native pinning caches are cleared.
+   */
+  async clearCertificateCache() {
+    return NativeHttpPluginRef.clearCertificateCache();
   }
 };
 

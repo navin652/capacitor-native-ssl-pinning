@@ -32,9 +32,10 @@ enum URLSessionUtils {
         }
 
         let pkPinning = (options["pkPinning"] as? Bool) ?? false
+        let source = (sslPinning["source"] as? String) ?? "asset"
         let mode: TrustMode = pkPinning
             ? .publicKeyPinning(hashes: certs.map { $0.replacingOccurrences(of: "sha256/", with: "") })
-            : .certificatePinning(certData: try loadBundledCertificates(named: certs))
+            : .certificatePinning(certData: try loadCertificates(named: certs, source: source))
 
         let session = buildSession(mode: mode, options: options)
         sessionsByDomain[domain] = session
@@ -112,9 +113,27 @@ enum URLSessionUtils {
     /// Certificate-pinning mode loads `.cer` files bundled as iOS app resources (Bundle.main).
     /// Callers may pass either a bare certificate name (`eftapme_new`) or a Capacitor public path
     /// (`public/certificates/eftapme_new`).
-    private static func loadBundledCertificates(named names: [String]) throws -> [Data] {
-        let certificates = names.compactMap { certPath -> Data? in
-            let nsPath = certPath as NSString
+    /// Loads `.cer`/`.pem` certificate data for certificate (SSL) pinning.
+    ///
+    /// - `source == "filesystem"`: each entry is treated as an absolute filesystem path to a
+    ///   certificate file stored on device storage (runtime rotation). Leading `file://` is
+    ///   stripped. e.g. the URI/path returned by `@capacitor/filesystem` `Filesystem.getUri()`.
+    /// - otherwise (default `"asset"`): entries are bundled iOS app resource paths (`Bundle.main`).
+    ///   Callers may pass either a bare certificate name (`eftapme_new`) or a Capacitor public path
+    ///   (`public/certificates/eftapme_new`).
+    private static func loadCertificates(named names: [String], source: String) throws -> [Data] {
+        let filesystem = source.caseInsensitiveCompare("filesystem") == .orderedSame
+
+        let certificates = names.compactMap { certRef -> Data? in
+            if filesystem {
+                var path = certRef
+                if path.hasPrefix("file://") {
+                    path = String(path.dropFirst("file://".count))
+                }
+                return try? Data(contentsOf: URL(fileURLWithPath: path))
+            }
+
+            let nsPath = certRef as NSString
             let directory = nsPath.deletingLastPathComponent == "." ? nil : nsPath.deletingLastPathComponent
             let resourceName = (nsPath.lastPathComponent as NSString).deletingPathExtension
             let fileExtension = nsPath.pathExtension.isEmpty ? "cer" : nsPath.pathExtension
@@ -127,9 +146,19 @@ enum URLSessionUtils {
         }
 
         guard !certificates.isEmpty else {
-            throw NativeHttpError.message("No bundled SSL certificates found")
+            throw NativeHttpError.message(
+                filesystem ? "No SSL certificates found at the given filesystem paths" : "No bundled SSL certificates found"
+            )
         }
         return certificates
+    }
+
+    /// Clears the per-domain cached URLSessions. Pinning config is cached once per domain and reused
+    /// for the plugin lifetime, so certificates replaced on disk (rotation via
+    /// `sslPinning.source: "filesystem"`) would otherwise only take effect after an app restart. Call
+    /// this after writing new certificate files so the next fetch() rebuilds pinning.
+    static func clearSessionCache() {
+        sessionsByDomain.removeAll()
     }
 
     private static func numberValue(_ value: JSValue?) -> Double? {
