@@ -13,8 +13,9 @@ generated from the official plugin template, with the API and pinning approach a
 ## Implementation status
 
 Both native platforms are fully implemented and mirror each other feature-for-feature (`fetch`,
-`getCookies`, `removeCookieByName`, `toggleLogging`; certificate & public-key pinning; `text`/
-`base64`/`blob`/`file` response types; multipart/file uploads; request logging):
+`getCookies`, `removeCookieByName`, `toggleLogging`, `clearCertificateCache`; certificate &
+public-key pinning; `text`/`base64`/`blob`/`file` response types; multipart/file uploads; request
+logging):
 
 - **Android** — OkHttp3-based. Details: [android/README.md](../../../android/README.md).
 - **iOS** — native `URLSession` + `CryptoKit`-based (no third-party HTTP library; an earlier
@@ -22,7 +23,27 @@ Both native platforms are fully implemented and mirror each other feature-for-fe
   dependency in `Package.swift`/the podspec). Details: [ios/README.md](../../../ios/README.md).
 - **Web — fallback only.** `src/web.ts` implements the same interface using the browser `fetch`/
   `document.cookie` APIs. SSL pinning options are accepted but meaningless there (browsers own TLS
-  trust) — this is expected, not a gap to fix.
+  trust) — this is expected, not a gap to fix. `clearCertificateCache()` is a no-op there too (no
+  per-domain client/session cache to invalidate).
+
+### Runtime certificate rotation (`sslPinning.source` + `clearCertificateCache`)
+
+Certificates for certificate-pinning mode (`pkPinning: false`) can come from two places, selected by
+`sslPinning.source` (see the JSDoc on `NativeSSLPinning.Options.sslPinning` in
+`src/definitions.ts`):
+
+- `'asset'` (default) — bundled resource paths, resolved under Android's `assets/` or iOS's
+  `Bundle.main`, as described in each platform README's "Where to put `.cer` files" section.
+- `'filesystem'` — absolute paths, or `file://`/`content://` URIs, to certificate files on device
+  storage (e.g. obtained via `@capacitor/filesystem`'s `Filesystem.getUri()`). This is for
+  certificates fetched/rotated at runtime rather than shipped in the app bundle.
+
+Both platforms still cache one pinned client/session per domain and reuse it for the process
+lifetime (see the caching note below), so simply overwriting a certificate file on disk does
+**not** change what an already-pinned domain trusts. Call `NativeHttp.clearCertificateCache()`
+after writing new certificate files so the next `fetch()` per domain rebuilds pinning against the
+fresh certificates — Android's `OkHttpUtils.clearClientCache()` and iOS's
+`URLSessionUtils.clearSessionCache()` both just clear their respective per-domain cache maps.
 
 The iOS side was verified on macOS after the initial port, which surfaced (and fixed) two real bugs
 worth knowing if you touch pinning code again:
@@ -34,12 +55,19 @@ worth knowing if you touch pinning code again:
   the SPKI DER (prepending the fixed algorithm-identifier header for the key's type/size) before
   hashing — see `URLSessionUtils.swift`'s `spkiHeader(for:)`. Only RSA 2048/4096 and EC P-256/P-384
   have a header defined; other key types/sizes fail closed (skipped when matching the chain).
-- **Certificate-pinning cert paths.** `loadBundledCertificates` now resolves nested, Capacitor-style
-  paths (`public/certificates/eftapme_new`), not just a bare filename, matching how Android resolves
-  the same `sslPinning.certs` string under `assets/` — see
-  [ios/README.md](../../../ios/README.md#where-to-put-cer-files) /
+- **Certificate-pinning cert paths.** iOS's certificate loading (now `loadCertificates(named:source:)`
+  in `URLSessionUtils.swift`) resolves nested, Capacitor-style paths (`public/certificates/eftapme_new`),
+  not just a bare filename, matching how Android resolves the same `sslPinning.certs` string under
+  `assets/` — see [ios/README.md](../../../ios/README.md#where-to-put-cer-files) /
   [android/README.md](../../../android/README.md#where-to-put-cer-files). It now also throws a clear
   error if no cert resolves, instead of silently pinning against an empty (trust-nothing) list.
+
+**Not yet independently re-verified on macOS**: `clearCertificateCache` and `sslPinning.source:
+'filesystem'` support were added to both platforms after the macOS verification pass above. The
+Android side has been compiled (`./gradlew compileDebugJavaWithJavac`); the iOS side
+(`URLSessionUtils.swift`'s `loadCertificates(named:source:)` / `clearSessionCache()`,
+`NativeHttpPlugin.swift`'s `clearCertificateCache`) has not been confirmed to build on Xcode/macOS
+yet — treat it as implemented-but-unverified until it has.
 
 `ios/Sources/NativeHttpPlugin/NativeHttp.swift`, the leftover plugin-template `echo` scaffold class,
 has been deleted — the plugin entry point talks to the `Utils/` helpers directly, there's no separate
@@ -70,8 +98,9 @@ dist/                                        # build output (esm + rollup bundle
 ```
 
 Both native sides use the same internal breakdown — a thin plugin-entry class that only wires calls
-to a small `Utils`/`utils` package: request/session building + pinning (`OkHttpUtils.java` /
-`URLSessionUtils.swift`), fetch orchestration + response shaping (`HttpFetcher.java` /
+to a small `Utils`/`utils` package: request/session building + pinning + the per-domain cache (build,
+reuse, and invalidate via `clearClientCache`/`clearSessionCache`) in `OkHttpUtils.java` /
+`URLSessionUtils.swift`, fetch orchestration + response shaping (`HttpFetcher.java` /
 `HttpFetcher.swift`), cookies (`CookieManager.java` / `CookieManager.swift`), a trust-all helper for
 `disableAllSecurity` (`SSLSecurityUtils.java` / `SSLSecurityUtils.swift`), and misc helpers
 (`Utilities.java` / `Utilities.swift`). Android additionally has a `TempFileManager` to copy

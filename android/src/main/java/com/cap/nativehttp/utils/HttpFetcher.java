@@ -35,6 +35,11 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
+/**
+ * Orchestrates a single {@code fetch()} call: picks the right {@link OkHttpClient} for the
+ * request's security options, runs it asynchronously, and shapes the response. The iOS counterpart
+ * is {@code HttpFetcher.swift}.
+ */
 public class HttpFetcher {
 
     private final Context context;
@@ -43,11 +48,26 @@ public class HttpFetcher {
     private static final String OPT_SSL_PINNING_KEY = "sslPinning";
     private static final String RESPONSE_TYPE = "responseType";
 
+    /**
+     * @param context       used to build OkHttp clients/requests (file resolution, content resolver)
+     * @param cookieManager the shared cookie jar, reused by every client built for this plugin instance
+     */
     public HttpFetcher(Context context, CookieManager cookieManager) {
         this.context = context;
         this.cookieManager = cookieManager;
     }
 
+    /**
+     * Runs an HTTP request with SSL/public-key pinning and resolves/rejects {@code call}
+     * asynchronously once it completes.
+     * <p>
+     * Client selection precedence: {@code disableAllSecurity: true} always wins (trust-all, no
+     * pinning); otherwise {@code sslPinning.certs} is required, and pinning mode (certificate vs.
+     * public-key) is chosen by {@code pkPinning}; if neither is present, the call is rejected with
+     * {@code "SSL Pinning key not provided"}.
+     *
+     * @param call the plugin call; expects a {@code url} string and an {@code options} object
+     */
     public void fetch(PluginCall call) throws JSONException, IOException, CertificateException, NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
         String url = call.getString("url");
         JSObject options = call.getObject("options");
@@ -93,6 +113,21 @@ public class HttpFetcher {
         });
     }
 
+    /**
+     * Shapes an OkHttp {@link Response} into the plugin's result and resolves/rejects {@code call}.
+     * Behavior depends on {@code options.responseType}: {@code file}/{@code blob} write the body to
+     * disk (under the directory resolved by {@link Utilities#resolveDirectory}) and resolve with
+     * {@code fileDetails: { path, mimeType }}; {@code base64} resolves with
+     * {@code fileDetails: { data, mimeType }}; the default, {@code text}, resolves with
+     * {@code bodyString}. Every response also includes {@code headers} and {@code status}. A
+     * non-2xx status rejects with code {@code "API Response"} and the built response as the message.
+     *
+     * @param call           the plugin call to resolve/reject
+     * @param options        the request options, consulted for {@code responseType},
+     *                       {@code fileSaveDirectory}, {@code fileName}
+     * @param okHttpResponse the completed OkHttp response
+     * @param response       the result object being built up; mutated in place before resolving
+     */
     private void handleResponse(PluginCall call, JSObject options, Response okHttpResponse, JSObject response) {
         ResponseBody body = okHttpResponse.body();
 

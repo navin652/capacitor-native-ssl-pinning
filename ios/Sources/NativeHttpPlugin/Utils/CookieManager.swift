@@ -8,6 +8,11 @@ import Capacitor
 /// separate forwarding step like Android's ForwardingCookieHandler (which exists there to mirror
 /// OkHttp's in-memory cookie jar into android.webkit.CookieManager for WebView visibility).
 final class CookieManager {
+    /// Resolves `call` with the cookies stored for a domain, as a `{ [cookieName]: value }` object.
+    /// Looks up by exact host match (leading-dot on the cookie's domain is stripped first) -- there
+    /// is no subdomain/suffix matching, matching Android's exact-host lookup.
+    ///
+    /// - Parameter call: expects a `domain` String (a full URL or bare host)
     func getCookies(_ call: CAPPluginCall) {
         guard let domain = call.getString("domain") else {
             call.reject("Missing required parameter: domain")
@@ -24,6 +29,10 @@ final class CookieManager {
         call.resolve(result)
     }
 
+    /// Removes every stored cookie with the given name, across every domain in
+    /// `HTTPCookieStorage.shared`. Always resolves, even if no cookie with that name existed.
+    ///
+    /// - Parameter call: expects a `cookieName` String
     func removeCookieByName(_ call: CAPPluginCall) {
         guard let cookieName = call.getString("cookieName") else {
             call.reject("Missing required parameter: cookieName")
@@ -37,6 +46,11 @@ final class CookieManager {
         call.resolve()
     }
 
+    /// Strips a leading `.` from a cookie's `domain` (per RFC 6265, a domain-scoped cookie's domain
+    /// is often stored with a leading dot), so it can be compared against a plain host string.
+    ///
+    /// - Parameter domain: an `HTTPCookie.domain` value
+    /// - Returns: the domain without a leading `.`
     private func normalizedDomain(_ domain: String) -> String {
         domain.hasPrefix(".") ? String(domain.dropFirst()) : domain
     }

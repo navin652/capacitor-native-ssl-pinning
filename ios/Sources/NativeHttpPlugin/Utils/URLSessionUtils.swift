@@ -5,17 +5,33 @@ import CryptoKit
 /// Builds and caches URLSessions per domain, and builds the URLRequest for a fetch() call. Mirrors
 /// android/src/main/java/com/cap/nativehttp/utils/OkHttpUtils.java: a pinned/trust-all session is
 /// built once per domain and reused for the lifetime of the plugin (`clientsByDomain` there,
-/// `sessionsByDomain` here) so pinning/redirect setup only happens once per host. Note this means,
-/// same as on Android, that changing pinning options for a domain after the first successful call
-/// has no effect until the app restarts.
+/// `sessionsByDomain` here) so pinning/redirect setup only happens once per host. This means
+/// changing pinning options for a domain after the first successful call has no effect until either
+/// the app restarts or `clearSessionCache()` is called (see `NativeHttpPlugin.clearCertificateCache`).
 enum URLSessionUtils {
+    /// When `true`, `HttpFetcher` logs the request line/headers and response status via
+    /// `CAPLog.print`. Checked fresh on every request (unlike Android's build-time interceptor), so
+    /// toggling it takes effect immediately, including for already-cached sessions.
     static var enableDebugLogging = false
 
+    /// Pinned/trust-all `URLSession`s, cached by domain name for the plugin's lifetime. Cleared by
+    /// `clearSessionCache()`.
     private static var sessionsByDomain: [String: URLSession] = [:]
 
     /// Picks a session per the same precedence as HttpFetcher.fetch()/OkHttpUtils on Android:
-    /// disableAllSecurity wins outright (trust-all, never cached), otherwise sslPinning.certs is
-    /// required and selects certificate vs public-key pinning based on pkPinning.
+    /// `disableAllSecurity` wins outright (trust-all, never cached), otherwise `sslPinning.certs` is
+    /// required and selects certificate vs public-key pinning based on `pkPinning`. For certificate
+    /// pinning, `sslPinning.source` additionally selects where `certs` entries are loaded from (see
+    /// `loadCertificates(named:source:)`).
+    ///
+    /// - Parameters:
+    ///   - domain: the request's domain, used as the session cache key
+    ///   - options: the full request options (`disableAllSecurity`, `sslPinning`, `pkPinning`,
+    ///     `followRedirects`, ...)
+    /// - Returns: a session configured for the given domain's security mode; a cached one if this
+    ///   domain has been pinned before
+    /// - Throws: `NativeHttpError.message` if pinning is required but misconfigured (missing
+    ///   `sslPinning.certs`, or no certificate resolves for certificate pinning)
     static func session(forDomain domain: String, options: JSObject) throws -> URLSession {
         let disableAllSecurity = (options["disableAllSecurity"] as? Bool) ?? false
         if disableAllSecurity {
@@ -93,12 +109,22 @@ enum URLSessionUtils {
 
     // MARK: - Session construction
 
+    /// The security mode a session/delegate was built for. Matches OkHttpUtils's three client-build
+    /// paths on Android (trust-all, public-key `CertificatePinner`, custom cert `X509TrustManager`).
     fileprivate enum TrustMode {
         case trustAll
         case publicKeyPinning(hashes: [String])
         case certificatePinning(certData: [Data])
     }
 
+    /// Builds a fresh `URLSession` for a security mode: shares cookies with `HTTPCookieStorage.shared`
+    /// (so `CookieManager` sees them without a separate forwarding step), and attaches a
+    /// `NativeHttpSessionDelegate` to handle trust evaluation and `followRedirects`.
+    ///
+    /// - Parameters:
+    ///   - mode: the trust mode to build the session's delegate with
+    ///   - options: the request options, consulted for `followRedirects`
+    /// - Returns: a new, unconfigured-cache session ready to run requests
     private static func buildSession(mode: TrustMode, options: JSObject) -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = HTTPCookieStorage.shared
@@ -110,17 +136,23 @@ enum URLSessionUtils {
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
-    /// Certificate-pinning mode loads `.cer` files bundled as iOS app resources (Bundle.main).
-    /// Callers may pass either a bare certificate name (`eftapme_new`) or a Capacitor public path
-    /// (`public/certificates/eftapme_new`).
-    /// Loads `.cer`/`.pem` certificate data for certificate (SSL) pinning.
+    /// Loads `.cer`/`.pem` certificate data for certificate (SSL) pinning, from one of two places
+    /// selected by `source` (mirrors `OkHttpUtils.initSSLPinning`'s `sslPinning.source` handling on
+    /// Android):
+    /// - `source == "filesystem"`: each entry in `names` is an absolute filesystem path (a leading
+    ///   `file://` is stripped) to a certificate file on device storage -- e.g. the path/URI
+    ///   returned by `@capacitor/filesystem`'s `Filesystem.getUri()`. Use this for certificates
+    ///   fetched/rotated at runtime.
+    /// - otherwise (default `"asset"`): each entry is a bundled iOS app resource path resolved via
+    ///   `Bundle.main`. Callers may pass either a bare certificate name (`eftapme_new`, extension
+    ///   defaults to `cer`) or a nested, Capacitor-style path (`public/certificates/eftapme_new`).
     ///
-    /// - `source == "filesystem"`: each entry is treated as an absolute filesystem path to a
-    ///   certificate file stored on device storage (runtime rotation). Leading `file://` is
-    ///   stripped. e.g. the URI/path returned by `@capacitor/filesystem` `Filesystem.getUri()`.
-    /// - otherwise (default `"asset"`): entries are bundled iOS app resource paths (`Bundle.main`).
-    ///   Callers may pass either a bare certificate name (`eftapme_new`) or a Capacitor public path
-    ///   (`public/certificates/eftapme_new`).
+    /// - Parameters:
+    ///   - names: the `sslPinning.certs` entries (asset paths, or filesystem paths/URIs)
+    ///   - source: `"asset"` (default) or `"filesystem"`, from `sslPinning.source`
+    /// - Returns: the loaded certificate data, one entry per resolved name
+    /// - Throws: `NativeHttpError.message` if none of `names` resolves to readable certificate data
+    ///   -- callers should not silently proceed with an empty (trust-nothing) pin list
     private static func loadCertificates(named names: [String], source: String) throws -> [Data] {
         let filesystem = source.caseInsensitiveCompare("filesystem") == .orderedSame
 
@@ -161,6 +193,11 @@ enum URLSessionUtils {
         sessionsByDomain.removeAll()
     }
 
+    /// Coerces a JS numeric value (bridged as either `Int` or `Double`) to a `Double`, for options
+    /// like `timeoutInterval` where the JS-side type is just `number`.
+    ///
+    /// - Parameter value: a value from the options object, expected to be numeric
+    /// - Returns: the value as a `Double`, or `nil` if it isn't numeric
     private static func numberValue(_ value: JSValue?) -> Double? {
         if let doubleValue = value as? Double { return doubleValue }
         if let intValue = value as? Int { return Double(intValue) }
@@ -176,11 +213,25 @@ private final class NativeHttpSessionDelegate: NSObject, URLSessionDelegate, URL
     private let mode: URLSessionUtils.TrustMode
     private let followRedirects: Bool
 
+    /// - Parameters:
+    ///   - mode: the trust mode this session's requests should be evaluated against
+    ///   - followRedirects: whether HTTP redirects should be followed; `false` cancels them
     init(mode: URLSessionUtils.TrustMode, followRedirects: Bool) {
         self.mode = mode
         self.followRedirects = followRedirects
     }
 
+    /// `URLSessionDelegate` callback: decides whether to trust the server's certificate chain,
+    /// dispatching to the right check for this delegate's `mode` (trust-all, public-key pinning via
+    /// `publicKeyMatches`, or certificate pinning via `certificateChainTrusted`). Ignores any
+    /// challenge that isn't server-trust evaluation (e.g. client certificate requests), deferring to
+    /// the system's default handling.
+    ///
+    /// - Parameters:
+    ///   - session: the session the challenge came from
+    ///   - challenge: the authentication challenge to evaluate
+    ///   - completionHandler: called with `.useCredential`/a trust credential to accept the
+    ///     connection, or `.cancelAuthenticationChallenge` to reject it
     func urlSession(
         _ session: URLSession,
         didReceive challenge: URLAuthenticationChallenge,
@@ -210,6 +261,15 @@ private final class NativeHttpSessionDelegate: NSObject, URLSessionDelegate, URL
         }
     }
 
+    /// `URLSessionTaskDelegate` callback: applies `followRedirects` (default `false`, same as
+    /// Android) by either following the proposed redirect request or cancelling it, which completes
+    /// the task with the redirect response as-is (so the caller sees the `3xx` status/`Location`
+    /// header rather than the redirected content).
+    ///
+    /// - Parameters:
+    ///   - response: the redirect response received
+    ///   - request: the request the system proposes following the redirect with
+    ///   - completionHandler: called with `request` to follow the redirect, or `nil` to not
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -306,6 +366,11 @@ private final class NativeHttpSessionDelegate: NSObject, URLSessionDelegate, URL
         return SecTrustEvaluateWithError(serverTrust, &error)
     }
 
+    /// Returns every certificate in a trust's chain, using the non-deprecated `SecTrustCopyCertificateChain`
+    /// where available (iOS 15+) and falling back to `SecTrustGetCertificateAtIndex` on iOS 14.
+    ///
+    /// - Parameter trust: the server trust to read the chain from
+    /// - Returns: the chain's certificates, leaf first
     private static func certificates(in trust: SecTrust) -> [SecCertificate] {
         if #available(iOS 15.0, *) {
             return (SecTrustCopyCertificateChain(trust) as? [SecCertificate]) ?? []
